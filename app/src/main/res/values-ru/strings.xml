@@ -81,4 +81,6 @@
     <string name="setup_done">Готово</string>
     <string name="setup_finish">Завершить настройку</string>
     <string name="setup_finish_for_now">Завершить на этом</string>
+    <string name="web_server_title" translatable="false">Веб-сервер</string>
+    <string name="web_server_summary" translatable="false">Потоковая передача аудио по локальной сети</string>
 </resources>
