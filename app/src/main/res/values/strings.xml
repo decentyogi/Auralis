@@ -82,4 +82,6 @@
     <string name="setup_done">Done</string>
     <string name="setup_finish">Finish setup</string>
     <string name="setup_finish_for_now">Finish for now</string>
+    <string name="web_server_title">Web Streaming Server</string>
+    <string name="web_server_summary">Stream local lossless FLAC and ALAC to any web browser without copying</string>
 </resources>

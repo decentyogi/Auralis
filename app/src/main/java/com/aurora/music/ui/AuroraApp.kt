@@ -721,6 +721,9 @@ fun AuroraApp() {
                 composable(Routes.SETTINGS_CONNECT) {
                     com.aurora.music.ui.screens.settings.ConnectSettingsScreen(padding) { nav.popBackStack() }
                 }
+                composable(Routes.SETTINGS_WEB_SERVER) {
+                    com.aurora.music.ui.screens.settings.WebServerSettingsScreen(onBack = { nav.popBackStack() })
+                }
                 composable(Routes.SETTINGS_OUTPUT) {
                     com.aurora.music.ui.screens.settings.AudioOutputSettingsScreen(
                         contentPadding = padding, onBack = { nav.popBackStack() },
@@ -1420,6 +1423,7 @@ fun AuroraApp() {
                                     onOpenOutput = { open(Routes.SETTINGS_OUTPUT) },
                                     onOpenNetwork = { open(Routes.SETTINGS_NETWORK) },
                                     onOpenConnect = { open(Routes.SETTINGS_CONNECT) },
+                                    onOpenWebServer = { open(Routes.SETTINGS_WEB_SERVER) },
                                     onOpenLoudness = { open(Routes.SETTINGS_LOUDNESS) },
                                     onOpenAdvancedAudio = { open(Routes.SETTINGS_ADVANCED_AUDIO) },
                                     onOpenAlarm = { open(Routes.SETTINGS_ALARM) },
