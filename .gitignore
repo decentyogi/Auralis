@@ -22,3 +22,6 @@ keystore.properties
 captures
 .externalNativeBuild
 .cxx
+
+.kotlin/
+

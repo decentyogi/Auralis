@@ -1,0 +1,83 @@
+name: Release APK Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type (release or debug)'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Set up Android SDK & NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK & CMake
+        run: |
+          yes | sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1" "platforms;android-35" "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Setup Signing Key (if secret provided)
+        if: ${{ env.SIGNING_KEY != '' }}
+        env:
+          SIGNING_KEY: ${{ secrets.AURORA_RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p keystore
+          echo "$SIGNING_KEY" | base64 -d > keystore/aurora-release.jks
+
+      - name: Build APK
+        env:
+          AURORA_KEYSTORE_PASSWORD: ${{ secrets.AURORA_KEYSTORE_PASSWORD }}
+          AURORA_KEY_ALIAS: ${{ secrets.AURORA_KEY_ALIAS }}
+          AURORA_KEY_PASSWORD: ${{ secrets.AURORA_KEY_PASSWORD }}
+        run: |
+          chmod +x ./gradlew
+          if [ "${{ github.event.inputs.build_type }}" = "debug" ] || [ -z "${{ secrets.AURORA_KEYSTORE_PASSWORD }}" ]; then
+            echo "Building debug APK..."
+            ./gradlew :app:assembleDebug --stacktrace
+            mkdir -p dist
+            cp app/build/outputs/apk/debug/app-debug.apk dist/Aurora-with-server.apk
+          else
+            echo "Building release APK..."
+            ./gradlew :app:assembleRelease --stacktrace
+            mkdir -p dist
+            cp app/build/outputs/apk/release/app-release.apk dist/Aurora-with-server.apk || cp app/build/outputs/apk/release/*.apk dist/Aurora-with-server.apk
+          fi
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aurora-with-server
+          path: dist/Aurora-with-server.apk
+
+      - name: Create GitHub Release (Tag Push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Aurora-with-server.apk
+          generate_release_notes: true
