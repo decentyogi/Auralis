@@ -16,7 +16,8 @@ data class WebTrack(
     val fileName: String,
     val locationId: String = "sys_music",
     val dateModified: Long = 0L,
-    val isAlac: Boolean = false
+    val isAlac: Boolean = false,
+    val filePath: String? = null
 ) {
     val durationFormatted: String
         get() {

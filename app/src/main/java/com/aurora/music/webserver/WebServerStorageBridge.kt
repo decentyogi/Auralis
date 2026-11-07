@@ -158,7 +158,8 @@ class WebServerStorageBridge(private val context: Context) {
                     fileName = obj.getString("fileName"),
                     locationId = obj.optString("locationId", "sys_music"),
                     dateModified = obj.optLong("dateModified", 0L),
-                    isAlac = obj.optBoolean("isAlac", false)
+                    isAlac = obj.optBoolean("isAlac", false),
+                    filePath = if (obj.has("filePath") && !obj.isNull("filePath")) obj.getString("filePath") else null
                 )
                 sharedTracksMap[track.id] = track
             }
@@ -185,6 +186,9 @@ class WebServerStorageBridge(private val context: Context) {
                     put("locationId", t.locationId)
                     put("dateModified", t.dateModified)
                     put("isAlac", t.isAlac)
+                    if (t.filePath != null) {
+                        put("filePath", t.filePath)
+                    }
                 }
                 array.put(obj)
             }
@@ -346,16 +350,32 @@ class WebServerStorageBridge(private val context: Context) {
 
     private fun scanSystemMediaStore(locationId: String): List<WebTrack> {
         val result = mutableListOf<WebTrack>()
-        val projection = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.TITLE,
-            MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.ALBUM,
-            MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.SIZE,
-            MediaStore.Audio.Media.DISPLAY_NAME,
-            MediaStore.Audio.Media.DATE_MODIFIED
-        )
+        val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            arrayOf(
+                MediaStore.Audio.Media._ID,
+                MediaStore.Audio.Media.TITLE,
+                MediaStore.Audio.Media.ARTIST,
+                MediaStore.Audio.Media.ALBUM,
+                MediaStore.Audio.Media.DURATION,
+                MediaStore.Audio.Media.SIZE,
+                MediaStore.Audio.Media.DISPLAY_NAME,
+                MediaStore.Audio.Media.DATE_MODIFIED,
+                MediaStore.Audio.Media.DATA,
+                MediaStore.Audio.Media.RELATIVE_PATH
+            )
+        } else {
+            arrayOf(
+                MediaStore.Audio.Media._ID,
+                MediaStore.Audio.Media.TITLE,
+                MediaStore.Audio.Media.ARTIST,
+                MediaStore.Audio.Media.ALBUM,
+                MediaStore.Audio.Media.DURATION,
+                MediaStore.Audio.Media.SIZE,
+                MediaStore.Audio.Media.DISPLAY_NAME,
+                MediaStore.Audio.Media.DATE_MODIFIED,
+                MediaStore.Audio.Media.DATA
+            )
+        }
 
         try {
             val cursor = context.contentResolver.query(
@@ -375,6 +395,10 @@ class WebServerStorageBridge(private val context: Context) {
                 val sizeCol = c.getColumnIndex(MediaStore.Audio.Media.SIZE)
                 val nameCol = c.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
                 val dateCol = c.getColumnIndex(MediaStore.Audio.Media.DATE_MODIFIED)
+                val dataCol = c.getColumnIndex(MediaStore.Audio.Media.DATA)
+                val relCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    c.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
+                } else -1
 
                 while (c.moveToNext()) {
                     val mediaId = if (idCol >= 0) c.getLong(idCol) else continue
@@ -386,6 +410,14 @@ class WebServerStorageBridge(private val context: Context) {
                     val fileName = if (nameCol >= 0) c.getString(nameCol) ?: "track.mp3" else "track.mp3"
                     val ext = fileName.substringAfterLast('.', "").lowercase()
                     val dateModified = if (dateCol >= 0) c.getLong(dateCol) * 1000L else 0L
+
+                    var rawPath = if (dataCol >= 0) c.getString(dataCol) else null
+                    if (rawPath.isNullOrEmpty() && relCol >= 0) {
+                        val rel = c.getString(relCol)
+                        if (!rel.isNullOrEmpty()) {
+                            rawPath = "/storage/emulated/0/${rel.trimStart('/')}$fileName"
+                        }
+                    }
 
                     val trackUri = Uri.withAppendedPath(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, mediaId.toString())
                     val isAlac = ext == "m4a" || ext == "alac"
@@ -403,7 +435,8 @@ class WebServerStorageBridge(private val context: Context) {
                             fileName = fileName,
                             locationId = locationId,
                             dateModified = dateModified,
-                            isAlac = isAlac
+                            isAlac = isAlac,
+                            filePath = rawPath
                         )
                     )
                 }
@@ -423,6 +456,18 @@ class WebServerStorageBridge(private val context: Context) {
         val cacheKey = "${uri}_${lastMod}_$fileLength"
 
         val cachedJson = metaCachePrefs.getString(cacheKey, null)
+        var resolvedPath: String? = null
+        if (uri.scheme == "file") {
+            resolvedPath = uri.path
+        } else {
+            try {
+                val docId = android.provider.DocumentsContract.getDocumentId(uri)
+                if (docId.startsWith("primary:")) {
+                    resolvedPath = "/storage/emulated/0/" + docId.removePrefix("primary:")
+                }
+            } catch (_: Exception) {}
+        }
+
         if (cachedJson != null) {
             try {
                 val obj = JSONObject(cachedJson)
@@ -438,7 +483,8 @@ class WebServerStorageBridge(private val context: Context) {
                     fileName = fileName,
                     locationId = locationId,
                     dateModified = lastMod,
-                    isAlac = obj.getBoolean("isAlac")
+                    isAlac = obj.getBoolean("isAlac"),
+                    filePath = resolvedPath
                 )
             } catch (_: Exception) {}
         }
@@ -482,7 +528,8 @@ class WebServerStorageBridge(private val context: Context) {
             fileName = fileName,
             locationId = locationId,
             dateModified = lastMod,
-            isAlac = isAlac
+            isAlac = isAlac,
+            filePath = resolvedPath
         )
 
         try {
@@ -513,54 +560,74 @@ class WebServerStorageBridge(private val context: Context) {
 
         try {
             // 1. Resolve physical filesystem path
-            var filePath: String? = null
-            if (track.uriString.startsWith("file://")) {
-                filePath = uri.path
-            } else if (track.uriString.startsWith("content://media/")) {
-                try {
-                    val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        arrayOf(
-                            MediaStore.Audio.Media.DATA,
-                            MediaStore.Audio.Media.RELATIVE_PATH,
-                            MediaStore.Audio.Media.DISPLAY_NAME
-                        )
-                    } else {
-                        arrayOf(MediaStore.Audio.Media.DATA)
-                    }
-                    context.contentResolver.query(uri, projection, null, null, null)?.use { c ->
-                        if (c.moveToFirst()) {
-                            val dataIdx = c.getColumnIndex(MediaStore.Audio.Media.DATA)
-                            if (dataIdx >= 0) {
-                                filePath = c.getString(dataIdx)
-                            }
-                            if (filePath.isNullOrEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                val relIdx = c.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
-                                val nameIdx = c.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
-                                val rel = if (relIdx >= 0) c.getString(relIdx) else null
-                                val name = if (nameIdx >= 0) c.getString(nameIdx) else track.fileName
-                                if (!rel.isNullOrEmpty() && !name.isNullOrEmpty()) {
-                                    filePath = "/storage/emulated/0/${rel.trimStart('/')}$name"
+            var filePath: String? = track.filePath
+            if (filePath.isNullOrEmpty()) {
+                if (track.uriString.startsWith("file://")) {
+                    filePath = uri.path
+                } else if (track.uriString.startsWith("content://media/")) {
+                    try {
+                        val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            arrayOf(
+                                MediaStore.Audio.Media.DATA,
+                                MediaStore.Audio.Media.RELATIVE_PATH,
+                                MediaStore.Audio.Media.DISPLAY_NAME
+                            )
+                        } else {
+                            arrayOf(MediaStore.Audio.Media.DATA)
+                        }
+                        context.contentResolver.query(uri, projection, null, null, null)?.use { c ->
+                            if (c.moveToFirst()) {
+                                val dataIdx = c.getColumnIndex(MediaStore.Audio.Media.DATA)
+                                if (dataIdx >= 0) {
+                                    val d = c.getString(dataIdx)
+                                    if (!d.isNullOrEmpty()) filePath = d
+                                }
+                                if (filePath.isNullOrEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                    val relIdx = c.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
+                                    val nameIdx = c.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
+                                    val rel = if (relIdx >= 0) c.getString(relIdx) else null
+                                    val name = if (nameIdx >= 0) c.getString(nameIdx) else track.fileName
+                                    if (!rel.isNullOrEmpty() && !name.isNullOrEmpty()) {
+                                        filePath = "/storage/emulated/0/${rel.trimStart('/')}$name"
+                                    }
                                 }
                             }
                         }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not query MediaStore path: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not query MediaStore path: ${e.message}")
+                } else if (track.uriString.startsWith("content://com.android.externalstorage") ||
+                    track.uriString.contains("/document/") ||
+                    track.uriString.contains("/tree/")
+                ) {
+                    try {
+                        val docId = android.provider.DocumentsContract.getDocumentId(uri)
+                        if (docId.startsWith("primary:")) {
+                            filePath = "/storage/emulated/0/" + docId.removePrefix("primary:")
+                        } else if (docId.contains(":")) {
+                            val parts = docId.split(":", limit = 2)
+                            val candidate = File("/storage/${parts[0]}/${parts[1]}")
+                            if (candidate.exists()) filePath = candidate.absolutePath
+                        }
+                    } catch (_: Exception) {}
                 }
-            } else if (track.uriString.startsWith("content://com.android.externalstorage") ||
-                track.uriString.contains("/document/") ||
-                track.uriString.contains("/tree/")
-            ) {
-                try {
-                    val docId = android.provider.DocumentsContract.getDocumentId(uri)
-                    if (docId.startsWith("primary:")) {
-                        filePath = "/storage/emulated/0/" + docId.removePrefix("primary:")
-                    } else if (docId.contains(":")) {
-                        val parts = docId.split(":", limit = 2)
-                        val candidate = File("/storage/${parts[0]}/${parts[1]}")
-                        if (candidate.exists()) filePath = candidate.absolutePath
+            }
+
+            // Fallback: If filePath is still null or does not exist, search standard audio locations
+            if (filePath.isNullOrEmpty() || !File(filePath!!).exists()) {
+                val candidateDirs = listOfNotNull(
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC),
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+                    File("/storage/emulated/0/Music"),
+                    File("/storage/emulated/0/Download")
+                )
+                for (dir in candidateDirs) {
+                    val candidate = File(dir, track.fileName)
+                    if (candidate.exists()) {
+                        filePath = candidate.absolutePath
+                        break
                     }
-                } catch (_: Exception) {}
+                }
             }
 
             // 2. Physical file deletion on host filesystem
@@ -603,7 +670,24 @@ class WebServerStorageBridge(private val context: Context) {
                 }
             }
 
-            // 4. ContentResolver deletion for MediaStore items
+            // 4. Check if any mounted SAF folder has write access to this file
+            if (!physicallyDeleted) {
+                val safLocations = getSavedLocations().filter { !it.isSystemLibrary }
+                for (loc in safLocations) {
+                    try {
+                        val rootDoc = DocumentFile.fromTreeUri(context, Uri.parse(loc.uriString)) ?: continue
+                        val targetDoc = findFileInDocumentTree(rootDoc, track.fileName)
+                        if (targetDoc != null && (targetDoc.delete() ||
+                            android.provider.DocumentsContract.deleteDocument(context.contentResolver, targetDoc.uri))
+                        ) {
+                            physicallyDeleted = true
+                            break
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // 5. ContentResolver deletion for MediaStore items
             if (track.uriString.startsWith("content://media/")) {
                 try {
                     val rows = context.contentResolver.delete(uri, null, null)
@@ -613,7 +697,10 @@ class WebServerStorageBridge(private val context: Context) {
                 } catch (e: Exception) {
                     Log.w(TAG, "ContentResolver delete: ${e.message}")
                 }
-            } else if (physicallyDeleted) {
+            }
+
+            // 6. Purge from MediaStore database and trigger rescan if physically deleted
+            if (physicallyDeleted) {
                 try {
                     context.contentResolver.delete(
                         MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
@@ -621,18 +708,16 @@ class WebServerStorageBridge(private val context: Context) {
                         arrayOf(track.fileName)
                     )
                 } catch (_: Exception) {}
-            }
-
-            // 5. Notify MediaScanner
-            if (physicallyDeleted && !filePath.isNullOrEmpty()) {
-                try {
-                    android.media.MediaScannerConnection.scanFile(
-                        context,
-                        arrayOf(filePath),
-                        null,
-                        null
-                    )
-                } catch (_: Exception) {}
+                if (!filePath.isNullOrEmpty()) {
+                    try {
+                        android.media.MediaScannerConnection.scanFile(
+                            context,
+                            arrayOf(filePath),
+                            null,
+                            null
+                        )
+                    } catch (_: Exception) {}
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error during physical file delete: ${e.message}", e)
@@ -655,6 +740,18 @@ class WebServerStorageBridge(private val context: Context) {
         }
 
         return@withContext false
+    }
+
+    private fun findFileInDocumentTree(dir: DocumentFile, targetFileName: String): DocumentFile? {
+        for (child in dir.listFiles()) {
+            if (child.isDirectory) {
+                val found = findFileInDocumentTree(child, targetFileName)
+                if (found != null) return found
+            } else if (child.name.equals(targetFileName, ignoreCase = true)) {
+                return child
+            }
+        }
+        return null
     }
 
     fun openTrackInputStream(track: WebTrack): InputStream? {

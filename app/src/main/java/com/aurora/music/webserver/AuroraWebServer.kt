@@ -582,10 +582,41 @@ class AuroraWebServer(
         val deleted = kotlinx.coroutines.runBlocking {
             storageBridge.deleteTrack(trackId)
         }
+        var needsAllFilesPerm = false
+        if (!deleted && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            if (!android.os.Environment.isExternalStorageManager()) {
+                needsAllFilesPerm = true
+                try {
+                    val intent = android.content.Intent(
+                        android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        android.net.Uri.parse("package:${context.packageName}")
+                    ).apply {
+                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                } catch (_: Exception) {
+                    try {
+                        val fallback = android.content.Intent(
+                            android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+                        ).apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(fallback)
+                    } catch (_: Exception) {}
+                }
+            }
+        }
         val json = JSONObject().apply {
             put("success", deleted)
             if (!deleted) {
-                put("error", "Could not delete file from device storage")
+                put(
+                    "error",
+                    if (needsAllFilesPerm) {
+                        "All Files Access permission is required to delete files from Android storage. The permission screen was opened on your phone — toggle it ON and click Delete again."
+                    } else {
+                        "Could not delete file from device storage. Please ensure 'All Files Access' permission is granted in Android Settings -> Apps -> Aurora -> Permissions."
+                    }
+                )
             }
         }
         sendJsonResponse(output, if (deleted) 200 else 400, json.toString())
@@ -615,6 +646,8 @@ class AuroraWebServer(
                 "Content-Type: $contentType\r\n" +
                 "Content-Length: ${data.size}\r\n" +
                 "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Allow-Methods: GET, DELETE, OPTIONS, HEAD\r\n" +
+                "Access-Control-Allow-Headers: Range, Content-Type, Accept\r\n" +
                 "Cache-Control: public, max-age=60\r\n" +
                 "Connection: close\r\n\r\n"
         output.write(header.toByteArray(Charsets.UTF_8))

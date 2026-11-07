@@ -264,6 +264,54 @@ fun WebServerSettingsScreen(
             }
         }
 
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
+            !android.os.Environment.isExternalStorageManager()
+        ) {
+            SettingsSectionTitle("Storage Access")
+            SettingsGroup {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        text = "All Files Access Required for Deletion",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "To allow deleting audio tracks from the web browser interface, Android requires 'All Files Access' permission.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    androidx.compose.material3.Button(
+                        onClick = {
+                            try {
+                                val intent = Intent(
+                                    android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                ).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(intent)
+                            } catch (_: Exception) {
+                                try {
+                                    val fallback = Intent(
+                                        android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+                                    ).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(fallback)
+                                } catch (_: Exception) {}
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Grant All Files Access")
+                    }
+                }
+            }
+        }
+
         SettingsSectionTitle("About Web Studio")
         SettingsGroup {
             Column(Modifier.padding(16.dp)) {

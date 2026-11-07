@@ -122,7 +122,7 @@ class YoutubeResolver(private val http: OkHttpClient = OkHttpClient(), private v
             }
         val year = runCatching { info.uploadDate?.offsetDateTime()?.year }.getOrNull()
         val description = info.description?.let {
-            if (it.type == Description.HTML) androidx.core.text.HtmlCompat.fromHtml(it.content.orEmpty(), androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString()
+            if (it.type == Description.Type.HTML) androidx.core.text.HtmlCompat.fromHtml(it.content.orEmpty(), androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString()
             else it.content.orEmpty()
         }.orEmpty()
         return DownloadInfo(
