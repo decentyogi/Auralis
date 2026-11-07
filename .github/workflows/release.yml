@@ -2,6 +2,8 @@ name: Release APK Build
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -9,11 +11,11 @@ on:
       build_type:
         description: 'Build Type (release or debug)'
         required: true
-        default: 'release'
+        default: 'debug'
         type: choice
         options:
-          - release
           - debug
+          - release
 
 permissions:
   contents: write
@@ -35,20 +37,19 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
-      - name: Set up Android SDK & NDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android NDK & CMake
+      - name: Install Android NDK & SDK Components
         run: |
-          yes | sdkmanager --install "ndk;27.0.12077973" "cmake;3.22.1" "platforms;android-35" "platforms;android-36" "build-tools;35.0.0"
-
-      - name: Setup Signing Key (if secret provided)
-        if: ${{ env.SIGNING_KEY != '' }}
-        env:
-          SIGNING_KEY: ${{ secrets.AURORA_RELEASE_KEYSTORE_BASE64 }}
-        run: |
-          mkdir -p keystore
-          echo "$SIGNING_KEY" | base64 -d > keystore/aurora-release.jks
+          set -e
+          echo "Accepting Android SDK licenses..."
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          echo "Installing required SDK packages..."
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install \
+            "ndk;27.0.12077973" \
+            "cmake;3.22.1" \
+            "platforms;android-35" \
+            "platforms;android-36" \
+            "build-tools;35.0.0"
+          echo "ndk.dir=$ANDROID_HOME/ndk/27.0.12077973" >> local.properties
 
       - name: Build APK
         env:
@@ -57,16 +58,16 @@ jobs:
           AURORA_KEY_PASSWORD: ${{ secrets.AURORA_KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
-          if [ "${{ github.event.inputs.build_type }}" = "debug" ] || [ -z "${{ secrets.AURORA_KEYSTORE_PASSWORD }}" ]; then
+          if [ "${{ github.event.inputs.build_type }}" = "release" ] && [ -n "${{ secrets.AURORA_KEYSTORE_PASSWORD }}" ]; then
+            echo "Building release APK..."
+            ./gradlew :app:assembleRelease --stacktrace
+            mkdir -p dist
+            cp app/build/outputs/apk/release/*.apk dist/Aurora-with-server.apk
+          else
             echo "Building debug APK..."
             ./gradlew :app:assembleDebug --stacktrace
             mkdir -p dist
             cp app/build/outputs/apk/debug/app-debug.apk dist/Aurora-with-server.apk
-          else
-            echo "Building release APK..."
-            ./gradlew :app:assembleRelease --stacktrace
-            mkdir -p dist
-            cp app/build/outputs/apk/release/app-release.apk dist/Aurora-with-server.apk || cp app/build/outputs/apk/release/*.apk dist/Aurora-with-server.apk
           fi
 
       - name: Upload APK Artifact
@@ -75,7 +76,7 @@ jobs:
           name: Aurora-with-server
           path: dist/Aurora-with-server.apk
 
-      - name: Create GitHub Release (Tag Push)
+      - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
