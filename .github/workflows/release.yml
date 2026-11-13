@@ -37,10 +37,9 @@ jobs:
         run: |
           if [ -n "$AURALIS_SYNC_PAT" ]; then
             echo "Syncing repository from cloud runner to decentyogi/Auralis..."
-            git remote add auralis https://decentyogi:${AURALIS_SYNC_PAT}@github.com/decentyogi/Auralis.git 2>/dev/null || git remote set-url auralis https://decentyogi:${AURALIS_SYNC_PAT}@github.com/decentyogi/Auralis.git
-            git push auralis HEAD:main --force || true
-            git push auralis HEAD:feature/web-alac-streaming --force || true
-            git push auralis --tags --force || true
+            git -c http.extraheader="" push "https://decentyogi:${AURALIS_SYNC_PAT}@github.com/decentyogi/Auralis.git" HEAD:refs/heads/main --force
+            git -c http.extraheader="" push "https://decentyogi:${AURALIS_SYNC_PAT}@github.com/decentyogi/Auralis.git" HEAD:refs/heads/feature/web-alac-streaming --force
+            git -c http.extraheader="" push "https://decentyogi:${AURALIS_SYNC_PAT}@github.com/decentyogi/Auralis.git" --tags --force || true
           fi
 
       - name: Set up JDK 21
@@ -99,11 +98,11 @@ jobs:
 
       - name: Create GitHub Release in Auralis
         if: success()
-        uses: softprops/action-gh-release@v2
-        with:
-          repository: decentyogi/Auralis
-          token: ${{ secrets.AURALIS_SYNC_PAT || secrets.GITHUB_TOKEN }}
-          tag_name: v1.0.0
-          name: "Auralis v1.0.0 (Web ALAC/FLAC Streaming)"
-          files: dist/Auralis.apk
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ secrets.AURALIS_SYNC_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create v1.0.0 dist/Auralis.apk \
+            --repo decentyogi/Auralis \
+            --title "Auralis v1.0.0 (Web ALAC/FLAC Streaming)" \
+            --notes "Auralis release with local Wi-Fi HTTP streaming server and hardware ALAC/FLAC decoding." \
+            --clobber
