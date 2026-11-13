@@ -81,4 +81,30 @@ object NetworkUtils {
             false
         }
     }
+
+    /**
+     * Checks if the given IP address is a private LAN, link-local, or loopback address.
+     * Prevents exposure to non-local or public networks.
+     */
+    fun isPrivateOrLoopbackAddress(address: java.net.InetAddress?): Boolean {
+        if (address == null) return false
+        if (address.isLoopbackAddress || address.isSiteLocalAddress || address.isLinkLocalAddress) {
+            return true
+        }
+        val host = address.hostAddress ?: return false
+        if (host.startsWith("127.") || host.startsWith("10.") || host.startsWith("192.168.") || host.startsWith("169.254.")) {
+            return true
+        }
+        if (host.startsWith("172.")) {
+            val parts = host.split(".")
+            if (parts.size >= 2) {
+                val second = parts[1].toIntOrNull() ?: 0
+                if (second in 16..31) return true
+            }
+        }
+        if (host == "::1" || host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd")) {
+            return true
+        }
+        return false
+    }
 }

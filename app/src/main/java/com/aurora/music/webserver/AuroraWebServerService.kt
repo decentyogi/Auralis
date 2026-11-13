@@ -53,6 +53,9 @@ class AuroraWebServerService : Service() {
 
         if (action == ACTION_STOP) {
             stopServer()
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                (applicationContext as? com.aurora.music.AuroraApplication)?.container?.settingsStore?.setWebServerEnabled(false)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
             } else {
@@ -85,7 +88,8 @@ class AuroraWebServerService : Service() {
             _isRunning.value = true
             _activePort.value = server.activePort
             val ip = NetworkUtils.getLocalIpAddress(applicationContext)
-            val url = "http://$ip:${server.activePort}"
+            val token = bridge.getAccessToken()
+            val url = if (token.isNotBlank()) "http://$ip:${server.activePort}/?token=$token" else "http://$ip:${server.activePort}"
             _serverUrl.value = url
 
             val notification = buildNotification(url)

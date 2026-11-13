@@ -94,6 +94,14 @@ class AuroraWebServer(
     private fun handleClient(socket: Socket) {
         requestCount.incrementAndGet()
         try {
+            // aurora-integration: accept requests only from private/LAN addresses
+            val clientIp = socket.inetAddress
+            if (!NetworkUtils.isPrivateOrLoopbackAddress(clientIp)) {
+                Log.w(TAG, "Rejected connection from non-LAN address: ${clientIp?.hostAddress}")
+                try { socket.close() } catch (_: Exception) {}
+                return
+            }
+
             socket.soTimeout = 20000
             val input = BufferedReader(InputStreamReader(socket.getInputStream()))
             val output = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
@@ -148,10 +156,35 @@ class AuroraWebServer(
             return
         }
 
+        // aurora-integration: require a random, regenerable access token on every request
+        val tokenParam = queryParams["token"]
+        val authHeader = headers["authorization"]?.removePrefix("Bearer ")?.trim()
+        val cookieHeader = headers["cookie"]
+        val cookieToken = cookieHeader?.split(";")?.map { it.trim() }
+            ?.firstOrNull { it.startsWith("aurora_auth_token=") }
+            ?.substringAfter("aurora_auth_token=")
+
+        val providedToken = tokenParam ?: authHeader ?: cookieToken
+        val requiredToken = storageBridge.getAccessToken()
+
+        if (requiredToken.isNotBlank() && providedToken != requiredToken) {
+            sendUnauthorized(output)
+            return
+        }
+
         when {
             method == "GET" && (path == "/" || path == "/index.html") -> {
                 val data = WebAssets.getIndexHtml(context)
-                sendResponse(output, 200, "OK", "text/html; charset=UTF-8", data)
+                val cookieHeaderStr = if (requiredToken.isNotBlank()) "Set-Cookie: aurora_auth_token=$requiredToken; Path=/; SameSite=Lax\r\n" else ""
+                val header = "HTTP/1.1 200 OK\r\n" +
+                        "Content-Type: text/html; charset=UTF-8\r\n" +
+                        "Content-Length: ${data.size}\r\n" +
+                        cookieHeaderStr +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Cache-Control: public, max-age=60\r\n" +
+                        "Connection: close\r\n\r\n"
+                output.write(header.toByteArray(Charsets.UTF_8))
+                output.write(data)
             }
 
             method == "GET" && path == "/api/status" -> {
@@ -579,6 +612,12 @@ class AuroraWebServer(
     }
 
     private fun handleDeleteTrack(trackId: String, output: OutputStream) {
+        // aurora-integration: DELETE is disabled by default for safety
+        if (!storageBridge.isDeleteAllowed()) {
+            sendJsonError(output, 403, "Track deletion via web interface is disabled by default for safety.")
+            return
+        }
+
         val deleted = kotlinx.coroutines.runBlocking {
             storageBridge.deleteTrack(trackId)
         }
@@ -633,6 +672,22 @@ class AuroraWebServer(
             put("error", message)
         }
         sendJsonResponse(output, statusCode, json.toString())
+    }
+
+    private fun sendUnauthorized(output: OutputStream) {
+        val json = JSONObject().apply {
+            put("success", false)
+            put("error", "Unauthorized: Valid access token is required")
+        }
+        val bytes = json.toString().toByteArray(Charsets.UTF_8)
+        val header = "HTTP/1.1 401 Unauthorized\r\n" +
+                "Content-Type: application/json; charset=UTF-8\r\n" +
+                "Content-Length: ${bytes.size}\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "WWW-Authenticate: Bearer realm=\"Aurora\"\r\n" +
+                "Connection: close\r\n\r\n"
+        output.write(header.toByteArray(Charsets.UTF_8))
+        output.write(bytes)
     }
 
     private fun sendResponse(

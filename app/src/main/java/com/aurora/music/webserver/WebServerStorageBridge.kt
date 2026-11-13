@@ -89,37 +89,78 @@ class WebServerStorageBridge(private val context: Context) {
     }
 
     /**
-     * Retrieves all cached tracks. If cache is empty, loads from disk or scans MediaStore immediately.
+     * Retrieves all cached tracks.
+     * aurora-integration: Feeds tracks from TARGET's local library (LocalLibrary / Song).
+     * Local files only; never exposes remote sources or credentials.
      */
     fun getCachedTracks(): List<WebTrack> {
+        if (sharedTracksMap.isNotEmpty()) {
+            return sharedTracksMap.values.toList().sortedBy { it.title.lowercase() }
+        }
+
+        // aurora-integration: feed from TARGET's LocalLibrary
+        try {
+            val app = context.applicationContext as? com.aurora.music.AuroraApplication
+            val localLibrary = app?.container?.localLibrary
+            if (localLibrary != null) {
+                kotlinx.coroutines.runBlocking {
+                    runCatching { localLibrary.ensureLoaded() }
+                }
+                val localSongs = localLibrary.songs
+                if (localSongs.isNotEmpty()) {
+                    val tracks = localSongs.map { song ->
+                        val ext = song.suffix.lowercase().ifBlank {
+                            song.path.substringAfterLast('.', "").lowercase().ifBlank { "mp3" }
+                        }
+                        val uriStr = song.streamUrl.ifBlank {
+                            ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, song.id.toLongOrNull() ?: 0L).toString()
+                        }
+                        val file = if (song.path.isNotBlank()) File(song.path) else null
+                        val sz = if (file != null && file.exists()) file.length() else 0L
+                        val name = if (song.path.isNotBlank()) song.path.substringAfterLast(File.separatorChar) else "${song.title}.$ext"
+                        val isAlacTrack = ext == "alac" || ext == "m4a"
+                        WebTrack(
+                            id = song.id,
+                            title = song.title.ifBlank { "Unknown Title" },
+                            artist = song.artist.ifBlank { "Unknown Artist" },
+                            album = song.album.ifBlank { "Unknown Album" },
+                            durationMs = song.durationSec.toLong() * 1000L,
+                            sizeBytes = sz,
+                            format = ext,
+                            uriString = uriStr,
+                            fileName = name,
+                            locationId = "sys_music",
+                            dateModified = song.dateAddedSec * 1000L,
+                            isAlac = isAlacTrack,
+                            filePath = song.path.ifBlank { null }
+                        )
+                    }
+                    for (t in tracks) {
+                        sharedTracksMap[t.id] = t
+                    }
+                    saveTracksToDiskCache(tracks)
+                    return tracks.sortedBy { it.title.lowercase() }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "LocalLibrary lookup failed, fallback to scan", e)
+        }
+
         ensureTracksLoaded()
         if (sharedTracksMap.isNotEmpty()) {
             return sharedTracksMap.values.toList().sortedBy { it.title.lowercase() }
         }
 
-        // Attempt scan of device MediaStore directly if cache is empty
+        // Fallback scan of device MediaStore directly if LocalLibrary is empty/uninitialized
         val mediaStoreTracks = scanSystemMediaStore("sys_music")
         if (mediaStoreTracks.isNotEmpty()) {
             for (t in mediaStoreTracks) {
                 sharedTracksMap[t.id] = t
             }
             saveTracksToDiskCache(mediaStoreTracks)
-            // Ensure system library location is registered in preferences
-            val locations = getSavedLocations().toMutableList()
-            if (locations.none { it.isSystemLibrary }) {
-                locations.add(0, WebLocation(
-                    id = "sys_music",
-                    name = "Device Music Library",
-                    uriString = "content://media/external/audio/media",
-                    trackCount = mediaStoreTracks.size,
-                    isSystemLibrary = true
-                ))
-                saveLocations(locations)
-            }
             return mediaStoreTracks.sortedBy { it.title.lowercase() }
         }
 
-        // Also check if any saved folder locations can be scanned
         val locations = getSavedLocations()
         val folderTracks = mutableListOf<WebTrack>()
         for (loc in locations) {
@@ -135,7 +176,7 @@ class WebServerStorageBridge(private val context: Context) {
             return folderTracks.sortedBy { it.title.lowercase() }
         }
 
-        return getDemoTracks()
+        return emptyList()
     }
 
     private fun loadTracksFromDiskCache() {
@@ -308,8 +349,6 @@ class WebServerStorageBridge(private val context: Context) {
                 sharedTracksMap[t.id] = t
             }
             saveTracksToDiskCache(allTracks)
-        } else {
-            allTracks.addAll(getDemoTracks())
         }
 
         allTracks
@@ -549,10 +588,15 @@ class WebServerStorageBridge(private val context: Context) {
 
     fun getTrackById(id: String): WebTrack? {
         ensureTracksLoaded()
-        return sharedTracksMap[id] ?: getDemoTracks().find { it.id == id }
+        return sharedTracksMap[id] ?: getCachedTracks().firstOrNull { it.id == id }
     }
 
     suspend fun deleteTrack(trackId: String): Boolean = withContext(Dispatchers.IO) {
+        // aurora-integration: track deletion disabled by default
+        if (!isDeleteAllowed()) {
+            Log.w(TAG, "Delete requested for track $trackId but deletion is disabled")
+            return@withContext false
+        }
         val track = getTrackById(trackId) ?: return@withContext false
 
         var physicallyDeleted = false
@@ -755,34 +799,45 @@ class WebServerStorageBridge(private val context: Context) {
     }
 
     fun openTrackInputStream(track: WebTrack): InputStream? {
-        if (track.uriString.startsWith("demo://")) {
-            return getDemoAudioStream(track.format)
-        }
+        // aurora-integration: omit demo:// tracks
         return try {
             val uri = Uri.parse(track.uriString)
             context.contentResolver.openInputStream(uri)
+                ?: track.filePath?.let { path ->
+                    val f = File(path)
+                    if (f.exists()) FileInputStream(f) else null
+                }
         } catch (e: Exception) {
-            Log.e(TAG, "Cannot open stream for ${track.uriString}", e)
-            null
+            track.filePath?.let { path ->
+                try {
+                    val f = File(path)
+                    if (f.exists()) FileInputStream(f) else null
+                } catch (_: Exception) { null }
+            }
         }
     }
 
     fun openTrackFileDescriptor(track: WebTrack): ParcelFileDescriptor? {
-        if (track.uriString.startsWith("demo://")) return null
+        // aurora-integration: omit demo:// tracks
         return try {
             val uri = Uri.parse(track.uriString)
             context.contentResolver.openFileDescriptor(uri, "r")
+                ?: track.filePath?.let { path ->
+                    val f = File(path)
+                    if (f.exists()) ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY) else null
+                }
         } catch (e: Exception) {
-            Log.e(TAG, "Cannot open file descriptor for ${track.uriString}", e)
-            null
+            track.filePath?.let { path ->
+                try {
+                    val f = File(path)
+                    if (f.exists()) ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY) else null
+                } catch (_: Exception) { null }
+            }
         }
     }
 
     fun openDecodedWavStream(track: WebTrack, startMs: Long = 0L): InputStream? {
-        if (track.uriString.startsWith("demo://")) {
-            return getDemoAudioStream("wav")
-        }
-
+        // aurora-integration: omit demo:// tracks
         try {
             val uri = Uri.parse(track.uriString)
             val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return null
@@ -875,7 +930,7 @@ class WebServerStorageBridge(private val context: Context) {
         }
     }
 
-    private fun writeStreamingWavHeader(out: java.io.OutputStream, sampleRate: Int, channels: Int) {
+    internal fun writeStreamingWavHeader(out: java.io.OutputStream, sampleRate: Int, channels: Int) {
         val byteRate = sampleRate * channels * 2
         val blockAlign = channels * 2
         val header = ByteArray(44)
@@ -1061,98 +1116,27 @@ class WebServerStorageBridge(private val context: Context) {
         return bos.toByteArray()
     }
 
-    private fun getDemoTracks(): List<WebTrack> {
-        return listOf(
-            WebTrack(
-                id = "demo_alac_1",
-                title = "Aurora Borealis (Apple Lossless)",
-                artist = "Solar Symphony",
-                album = "Cosmic Waves (2024)",
-                durationMs = 214000,
-                sizeBytes = 28420000,
-                format = "m4a",
-                uriString = "demo://sample_alac.m4a",
-                fileName = "Aurora Borealis.m4a",
-                locationId = "demo_loc",
-                isAlac = true
-            ),
-            WebTrack(
-                id = "demo_flac_2",
-                title = "Midnight Starlight (FLAC Studio)",
-                artist = "Celestial Ensemble",
-                album = "Starlight Odyssey",
-                durationMs = 186000,
-                sizeBytes = 34500000,
-                format = "flac",
-                uriString = "demo://sample_flac.flac",
-                fileName = "Midnight Starlight.flac",
-                locationId = "demo_loc",
-                isAlac = false
-            ),
-            WebTrack(
-                id = "demo_mp3_3",
-                title = "Neon Highway Groove",
-                artist = "Cyber Pulse",
-                album = "Night City Radio",
-                durationMs = 175000,
-                sizeBytes = 7200000,
-                format = "mp3",
-                uriString = "demo://sample_mp3.mp3",
-                fileName = "Neon Highway Groove.mp3",
-                locationId = "demo_loc",
-                isAlac = false
-            )
-        )
-    }
-
-    private fun getDemoAudioStream(format: String): InputStream {
-        val sampleRate = 44100
-        val durationSec = 15
-        val numSamples = sampleRate * durationSec
-        val bytes = ByteArrayOutputStream()
-
-        val dataSize = numSamples * 2 * 2
-        val totalSize = 36 + dataSize
-
-        bytes.write("RIFF".toByteArray())
-        bytes.write(intToBytes(totalSize))
-        bytes.write("WAVE".toByteArray())
-        bytes.write("fmt ".toByteArray())
-        bytes.write(intToBytes(16))
-        bytes.write(shortToBytes(1))
-        bytes.write(shortToBytes(2))
-        bytes.write(intToBytes(sampleRate))
-        bytes.write(intToBytes(sampleRate * 2 * 2))
-        bytes.write(shortToBytes(4))
-        bytes.write(shortToBytes(16))
-        bytes.write("data".toByteArray())
-        bytes.write(intToBytes(dataSize))
-
-        for (i in 0 until numSamples) {
-            val t = i.toDouble() / sampleRate
-            val freqL = 440.0 * Math.sin(t * 0.5) + 330.0
-            val freqR = 554.37 * Math.cos(t * 0.4) + 440.0
-            val env = Math.min(1.0, Math.sin(Math.PI * (i % (sampleRate * 2)) / (sampleRate * 2)))
-            val sampleValL = (Math.sin(2.0 * Math.PI * freqL * t) * 8000.0 * env).toInt().toShort()
-            val sampleValR = (Math.sin(2.0 * Math.PI * freqR * t) * 8000.0 * env).toInt().toShort()
-            bytes.write(sampleValL.toInt() and 0xff)
-            bytes.write((sampleValL.toInt() shr 8) and 0xff)
-            bytes.write(sampleValR.toInt() and 0xff)
-            bytes.write((sampleValR.toInt() shr 8) and 0xff)
+    // aurora-integration: token management for request authorization
+    fun getAccessToken(): String {
+        var token = prefs.getString("auth_token", null)
+        if (token.isNullOrBlank()) {
+            token = regenerateAccessToken()
         }
-
-        return ByteArrayInputStream(bytes.toByteArray())
+        return token
     }
 
-    private fun intToBytes(value: Int): ByteArray = byteArrayOf(
-        (value and 0xff).toByte(),
-        ((value shr 8) and 0xff).toByte(),
-        ((value shr 16) and 0xff).toByte(),
-        ((value shr 24) and 0xff).toByte()
-    )
+    fun regenerateAccessToken(): String {
+        val newToken = java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+        prefs.edit().putString("auth_token", newToken).apply()
+        return newToken
+    }
 
-    private fun shortToBytes(value: Int): ByteArray = byteArrayOf(
-        (value and 0xff).toByte(),
-        ((value shr 8) and 0xff).toByte()
-    )
+    // aurora-integration: track deletion disabled by default
+    fun isDeleteAllowed(): Boolean {
+        return prefs.getBoolean("allow_delete", false)
+    }
+
+    fun setDeleteAllowed(allowed: Boolean) {
+        prefs.edit().putBoolean("allow_delete", allowed).apply()
+    }
 }
