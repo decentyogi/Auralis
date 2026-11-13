@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - 'feature/*'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -56,34 +57,37 @@ jobs:
             "build-tools;35.0.0"
           echo "ndk.dir=$ANDROID_HOME/ndk/27.0.12077973" >> local.properties
 
-      - name: Build APK
+      - name: Run Unit Tests & Build APK
         env:
           AURORA_KEYSTORE_PASSWORD: ${{ secrets.AURORA_KEYSTORE_PASSWORD }}
           AURORA_KEY_ALIAS: ${{ secrets.AURORA_KEY_ALIAS }}
           AURORA_KEY_PASSWORD: ${{ secrets.AURORA_KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
+          echo "Running unit tests..."
+          ./gradlew :app:testDebugUnitTest --stacktrace
+
           if [ "${{ github.event.inputs.build_type }}" = "release" ] && [ -n "${{ secrets.AURORA_KEYSTORE_PASSWORD }}" ]; then
             echo "Building release APK..."
             ./gradlew :app:assembleRelease --stacktrace
             mkdir -p dist
-            cp app/build/outputs/apk/release/*.apk dist/Aurora-with-server.apk
+            cp app/build/outputs/apk/release/*.apk dist/Auralis.apk
           else
             echo "Building debug APK..."
             ./gradlew :app:assembleDebug --stacktrace
             mkdir -p dist
-            cp app/build/outputs/apk/debug/app-debug.apk dist/Aurora-with-server.apk
+            cp app/build/outputs/apk/debug/app-debug.apk dist/Auralis.apk
           fi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Aurora-with-server
-          path: dist/Aurora-with-server.apk
+          name: Auralis-apk
+          path: dist/Auralis.apk
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Aurora-with-server.apk
+          files: dist/Auralis.apk
           generate_release_notes: true
