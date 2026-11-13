@@ -26,8 +26,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.OpenInBrowser
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -41,6 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,23 +57,37 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aurora.music.AuroraApplication
+import com.aurora.music.data.WebServerPrefs
 import com.aurora.music.webserver.AuroraWebServerService
 import com.aurora.music.webserver.NetworkUtils
 import com.aurora.music.webserver.QrCodeView
 import com.aurora.music.webserver.WebServerStorageBridge
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun WebServerSettingsScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val app = context.applicationContext as? AuroraApplication
+    val settingsStore = app?.container?.settingsStore
+    val scope = rememberCoroutineScope()
+
+    val webPrefs by settingsStore?.webServerPrefs?.collectAsStateWithLifecycle(WebServerPrefs())
+        ?: remember { mutableStateOf(WebServerPrefs()) }
+
     val isRunning by AuroraWebServerService.isRunning.collectAsStateWithLifecycle()
     val serverUrl by AuroraWebServerService.serverUrl.collectAsStateWithLifecycle()
     val activePort by AuroraWebServerService.activePort.collectAsStateWithLifecycle()
 
+    val bridge = remember { WebServerStorageBridge(context) }
+    var currentToken by remember { mutableStateOf(bridge.getAccessToken()) }
+    var allowDelete by remember { mutableStateOf(bridge.isDeleteAllowed()) }
+
     val localIp = remember(isRunning) { NetworkUtils.getLocalIpAddress(context) }
-    val effectiveUrl = serverUrl ?: "http://$localIp:$activePort"
+    val effectiveUrl = serverUrl ?: "http://$localIp:$activePort/?token=$currentToken"
 
     var copiedRecently by remember { mutableStateOf(false) }
 
@@ -79,7 +98,7 @@ fun WebServerSettingsScreen(
         }
     }
 
-    val tracks = remember { WebServerStorageBridge(context).getCachedTracks() }
+    val tracks = remember { bridge.getCachedTracks() }
     val totalTracks = tracks.size
     val losslessTracks = remember(tracks) {
         tracks.count { it.format.equals("flac", ignoreCase = true) || it.isAlac || it.format.equals("m4a", ignoreCase = true) }
@@ -103,9 +122,10 @@ fun WebServerSettingsScreen(
             SettingsSwitchRow(
                 icon = Icons.Default.Wifi,
                 title = "Local Music Server",
-                subtitle = if (isRunning) "Server is active on local Wi-Fi" else "Tap to start HTTP streaming server",
+                subtitle = if (isRunning) "Server is active on local Wi-Fi" else "Serve music library to browsers on local Wi-Fi",
                 checked = isRunning,
                 onCheckedChange = { enable ->
+                    scope.launch { settingsStore?.setWebServerEnabled(enable) }
                     val intent = Intent(context, AuroraWebServerService::class.java).apply {
                         action = if (enable) AuroraWebServerService.ACTION_START else AuroraWebServerService.ACTION_STOP
                     }
@@ -133,7 +153,7 @@ fun WebServerSettingsScreen(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                text = "STREAMING URL",
+                                text = "STREAMING URL (WITH TOKEN)",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
@@ -194,6 +214,8 @@ fun WebServerSettingsScreen(
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(10.dp)
                         ) {
+                            Icon(Icons.Default.Share, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
                             Text("Share URL")
                         }
                     }
@@ -221,6 +243,66 @@ fun WebServerSettingsScreen(
                     }
                 }
             }
+        }
+
+        SettingsSectionTitle("Security & Authorization")
+        SettingsGroup {
+            Column(Modifier.padding(16.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "ACCESS TOKEN",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = currentToken,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            val newToken = bridge.regenerateAccessToken()
+                            currentToken = newToken
+                            scope.launch { settingsStore?.setWebServerToken(newToken) }
+                            Toast.makeText(context, "Access token regenerated", Toast.LENGTH_SHORT).show()
+                        },
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Regenerate")
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "Restricted to local Wi-Fi / private LAN addresses. The random access token is required on every request to prevent unauthorized access.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            SettingsRowDivider()
+            SettingsSwitchRow(
+                icon = Icons.Default.Delete,
+                title = "Allow Web File Deletion",
+                subtitle = if (allowDelete) "Clients on Wi-Fi can delete tracks from storage" else "File deletion disabled by default for safety",
+                checked = allowDelete,
+                onCheckedChange = { allowed ->
+                    allowDelete = allowed
+                    bridge.setDeleteAllowed(allowed)
+                    scope.launch { settingsStore?.setWebServerAllowDelete(allowed) }
+                }
+            )
         }
 
         SettingsSectionTitle("Library Status")
@@ -283,7 +365,7 @@ fun WebServerSettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(12.dp))
-                    androidx.compose.material3.Button(
+                    Button(
                         onClick = {
                             try {
                                 val intent = Intent(

@@ -19,7 +19,12 @@ import com.aurora.music.playback.network.NetworkOutputManager
 import com.aurora.music.playback.network.NetworkTarget
 
 @Composable
-fun NetworkOutputScreen(contentPadding: PaddingValues, onBack: () -> Unit, onOpenConnect: () -> Unit) {
+fun NetworkOutputScreen(
+    contentPadding: PaddingValues,
+    onBack: () -> Unit,
+    onOpenConnect: () -> Unit,
+    onOpenWebServer: () -> Unit = {}
+) {
     val manager = (LocalContext.current.applicationContext as AuroraApplication).container.networkOutput
     Column(Modifier.fillMaxWidth()) {
         SettingsTopBar(appString(R.string.text_network_playback_5d5a8a), onBack)
@@ -34,6 +39,8 @@ fun NetworkOutputScreen(contentPadding: PaddingValues, onBack: () -> Unit, onOpe
                     RemoteControlSwitch(manager)
                     SettingsRowDivider()
                     SettingsDestinationRow(Icons.Filled.Devices, SettingsDestinations.connect, appString(R.string.connect_settings_link), onClick = onOpenConnect)
+                    SettingsRowDivider()
+                    SettingsDestinationRow(Icons.Filled.Devices, SettingsDestinations.webServer, SettingsDestinations.webServer.description, onClick = onOpenWebServer)
                 }
             }
         }

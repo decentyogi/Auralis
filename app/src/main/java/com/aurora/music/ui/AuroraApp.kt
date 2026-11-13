@@ -716,7 +716,8 @@ fun AuroraApp() {
                 }
                 composable(Routes.SETTINGS_NETWORK) {
                     com.aurora.music.ui.screens.settings.NetworkOutputScreen(padding, onBack = { nav.popBackStack() },
-                        onOpenConnect = { nav.navigate(Routes.SETTINGS_CONNECT) })
+                        onOpenConnect = { nav.navigate(Routes.SETTINGS_CONNECT) },
+                        onOpenWebServer = { nav.navigate(Routes.SETTINGS_WEB_SERVER) })
                 }
                 composable(Routes.SETTINGS_CONNECT) {
                     com.aurora.music.ui.screens.settings.ConnectSettingsScreen(padding) { nav.popBackStack() }
