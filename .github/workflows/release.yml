@@ -30,6 +30,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Sync repository to Auralis
         env:
@@ -37,9 +38,10 @@ jobs:
         run: |
           if [ -n "$AURALIS_SYNC_PAT" ]; then
             echo "Syncing repository from cloud runner to decentyogi/Auralis..."
-            git -c http.extraheader="" push "https://decentyogi:${AURALIS_SYNC_PAT}@github.com/decentyogi/Auralis.git" HEAD:refs/heads/main --force
-            git -c http.extraheader="" push "https://decentyogi:${AURALIS_SYNC_PAT}@github.com/decentyogi/Auralis.git" HEAD:refs/heads/feature/web-alac-streaming --force
-            git -c http.extraheader="" push "https://decentyogi:${AURALIS_SYNC_PAT}@github.com/decentyogi/Auralis.git" --tags --force || true
+            git config --local --unset-all http.https://github.com/.extraheader 2>/dev/null || true
+            git push "https://decentyogi:${AURALIS_SYNC_PAT}@github.com/decentyogi/Auralis.git" HEAD:refs/heads/main --force
+            git push "https://decentyogi:${AURALIS_SYNC_PAT}@github.com/decentyogi/Auralis.git" HEAD:refs/heads/feature/web-alac-streaming --force
+            git push "https://decentyogi:${AURALIS_SYNC_PAT}@github.com/decentyogi/Auralis.git" --tags --force || true
           fi
 
       - name: Set up JDK 21
