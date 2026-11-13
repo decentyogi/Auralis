@@ -98,13 +98,10 @@ jobs:
           name: Auralis-apk
           path: dist/Auralis.apk
 
-      - name: Create GitHub Release in Auralis
+      - name: Publish APK to GitHub Release in Auralis
         if: success()
         env:
           GH_TOKEN: ${{ secrets.AURALIS_SYNC_PAT || secrets.GITHUB_TOKEN }}
         run: |
-          gh release create v1.0.0 dist/Auralis.apk \
-            --repo decentyogi/Auralis \
-            --title "Auralis v1.0.0 (Web ALAC/FLAC Streaming)" \
-            --notes "Auralis release with local Wi-Fi HTTP streaming server and hardware ALAC/FLAC decoding." \
-            --clobber
+          gh release upload v1.0.0 dist/Auralis.apk --repo decentyogi/Auralis --clobber || \
+          gh release create v1.0.0 dist/Auralis.apk --repo decentyogi/Auralis --title "Auralis v1.0.0 (Web ALAC/FLAC Streaming)" --notes "Auralis release with local Wi-Fi HTTP streaming server and hardware ALAC/FLAC decoding."
