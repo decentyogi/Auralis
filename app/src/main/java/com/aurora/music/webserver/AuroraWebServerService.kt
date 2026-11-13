@@ -14,8 +14,11 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.aurora.music.MainActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 class AuroraWebServerService : Service() {
 
@@ -53,7 +56,7 @@ class AuroraWebServerService : Service() {
 
         if (action == ACTION_STOP) {
             stopServer()
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            CoroutineScope(Dispatchers.IO).launch {
                 (applicationContext as? com.aurora.music.AuroraApplication)?.container?.settingsStore?.setWebServerEnabled(false)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
