@@ -1702,4 +1702,19 @@ class SettingsStore(private val dataStore: DataStore<Preferences>, private val f
             require(ParamBandCodec.decodePreference(entry).size == 1) { "Backup contains an invalid parametric EQ band." }
         }
     }
+
+    // web streaming server (serves local tracks to browser over wi-fi)
+    val webServerPrefs: Flow<WebServerPrefs> = dataStore.data.map {
+        WebServerPrefs(
+            enabled = it[Keys.WEB_SERVER_ENABLED] ?: false,
+            port = it[Keys.WEB_SERVER_PORT] ?: WebServerPrefs.DEFAULT_PORT,
+            token = it[Keys.WEB_SERVER_TOKEN] ?: "",
+            allowDelete = it[Keys.WEB_SERVER_ALLOW_DELETE] ?: false,
+        )
+    }.distinctUntilChanged()
+
+    suspend fun setWebServerEnabled(enabled: Boolean) = dataStore.edit { it[Keys.WEB_SERVER_ENABLED] = enabled }
+    suspend fun setWebServerPort(port: Int) = dataStore.edit { it[Keys.WEB_SERVER_PORT] = port }
+    suspend fun setWebServerToken(token: String) = dataStore.edit { it[Keys.WEB_SERVER_TOKEN] = token }
+    suspend fun setWebServerAllowDelete(allow: Boolean) = dataStore.edit { it[Keys.WEB_SERVER_ALLOW_DELETE] = allow }
 }

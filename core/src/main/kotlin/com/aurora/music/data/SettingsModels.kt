@@ -396,3 +396,15 @@ data class GesturePrefs(
     val swipeDownDismiss: Boolean = true,
     val doubleTapPause: Boolean = true,
 )
+
+// local wi-fi streaming server settings
+data class WebServerPrefs(
+    val enabled: Boolean = false,
+    val port: Int = DEFAULT_PORT,
+    val token: String = "",
+    val allowDelete: Boolean = false,
+) {
+    companion object {
+        const val DEFAULT_PORT = 8080
+    }
+}

@@ -246,4 +246,10 @@ internal object SettingsKeys {
     val DISCORD_SHOW_ALBUM = booleanPreferencesKey("discord_show_album")
     val DISCORD_ACTIVITY_NAME = stringPreferencesKey("discord_activity_name")
     val DISCORD_APP_ID = stringPreferencesKey("discord_app_id")
+
+    // web streaming server (serves local tracks to browser over wi-fi)
+    val WEB_SERVER_ENABLED = booleanPreferencesKey("web_server_enabled")
+    val WEB_SERVER_PORT = intPreferencesKey("web_server_port")
+    val WEB_SERVER_TOKEN = stringPreferencesKey("web_server_token")
+    val WEB_SERVER_ALLOW_DELETE = booleanPreferencesKey("web_server_allow_delete")
 }
