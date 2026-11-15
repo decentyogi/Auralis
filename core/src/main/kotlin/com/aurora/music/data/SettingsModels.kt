@@ -254,6 +254,7 @@ object HomeSection {
 data class UiPrefs(
     val themeMode: Int = ThemeMode.DARK,
     val themeStyle: Int = ThemeStyle.AURORA,
+    val liveGlassEnabled: Boolean = false,
     val accentMode: Int = AccentMode.PRESET,
     val accentPreset: Int = 0,
     val accentColor: Long = 0xFFFF2E7EL,

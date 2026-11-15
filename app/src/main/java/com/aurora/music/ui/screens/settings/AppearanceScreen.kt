@@ -93,6 +93,17 @@ fun AppearanceScreen(contentPadding: PaddingValues, onBack: () -> Unit, onOpenNa
 
             item { SettingsSectionTitle(appString(R.string.text_theme_a797e3)) }
             item { ThemeStylePicker(prefs) { style -> scope.launch { store.setThemeStyle(style) } } }
+            if (prefs.themeStyle == ThemeStyle.GLASS) {
+                item {
+                    SettingsSwitchRow(
+                        title = "Live Glass Blur",
+                        subtitle = "Real-time backdrop blur. Keep disabled for smooth performance and lower battery use.",
+                        checked = prefs.liveGlassEnabled,
+                    ) { enabled ->
+                        scope.launch { store.setLiveGlassEnabled(enabled) }
+                    }
+                }
+            }
             item {
                 SegmentedRow(appString(R.string.text_mode_a7b93d), listOf(appString(R.string.text_system_bc0792), appString(R.string.text_light_a36ef8), appString(R.string.text_dark_ae1ef0), "AMOLED"), prefs.themeMode) { i ->
                     scope.launch { store.setThemeMode(i) }
