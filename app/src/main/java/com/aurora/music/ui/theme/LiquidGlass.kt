@@ -54,7 +54,7 @@ fun GlassHost(content: @Composable () -> Unit) {
     val page = rememberLayerBackdrop()
     val chrome = rememberCombinedBackdrop(ambient, page)
     val layers = remember(ambient, page) { GlassLayers(ambient, page) }
-    val live = isGlassTheme() && liveGlassSupported
+    val live = isGlassTheme() && liveGlassSupported && LocalUiPrefs.current.liveGlassEnabled
     CompositionLocalProvider(
         LocalGlassLayers provides layers.takeIf { live },
         LocalGlassBackdrop provides chrome.takeIf { live },
@@ -101,7 +101,7 @@ fun Modifier.liquidGlass(
     onDrawSurface: (DrawScope.() -> Unit)? = null,
 ): Modifier {
     val dark = glassIsDark()
-    if (backdrop == null || !liveGlassSupported) {
+    if (backdrop == null || !liveGlassSupported || !LocalUiPrefs.current.liveGlassEnabled) {
         val fill = if (surface.isSpecified) surface.copy(alpha = maxOf(surface.alpha, .9f)) else GlassColors.surface(dark, live = false)
         return this.clip(shape).background(fill).border(1.dp, GlassColors.rim(dark), shape)
             .then(if (onDrawSurface != null) Modifier.drawWithCache { onDrawBehind(onDrawSurface) } else Modifier)

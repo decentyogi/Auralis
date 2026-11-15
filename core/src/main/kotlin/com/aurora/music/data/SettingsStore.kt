@@ -92,6 +92,7 @@ class SettingsStore(private val dataStore: DataStore<Preferences>, private val f
         UiPrefs(
             themeMode = p[Keys.UI_THEME_MODE] ?: ThemeMode.DARK,
             themeStyle = (p[Keys.UI_THEME_STYLE] ?: ThemeStyle.AURORA).coerceIn(ThemeStyle.AURORA, ThemeStyle.GLASS),
+            liveGlassEnabled = p[Keys.UI_LIVE_GLASS_ENABLED] ?: false,
             accentMode = p[Keys.UI_ACCENT_MODE] ?: AccentMode.PRESET,
             accentPreset = p[Keys.UI_ACCENT_PRESET] ?: 0,
             accentColor = p[Keys.UI_ACCENT_COLOR] ?: 0xFFFF2E7EL,
@@ -1513,6 +1514,7 @@ class SettingsStore(private val dataStore: DataStore<Preferences>, private val f
 
     suspend fun setThemeMode(v: Int) = dataStore.edit { it[Keys.UI_THEME_MODE] = v }
     suspend fun setThemeStyle(v: Int) = dataStore.edit { it[Keys.UI_THEME_STYLE] = v.coerceIn(ThemeStyle.AURORA, ThemeStyle.GLASS) }
+    suspend fun setLiveGlassEnabled(v: Boolean) = dataStore.edit { it[Keys.UI_LIVE_GLASS_ENABLED] = v }
     suspend fun setAccentMode(v: Int) = dataStore.edit { it[Keys.UI_ACCENT_MODE] = v }
     suspend fun setAccentPreset(v: Int) = dataStore.edit { it[Keys.UI_ACCENT_PRESET] = v }
     suspend fun setAccentColor(v: Long) = dataStore.edit { it[Keys.UI_ACCENT_COLOR] = v }

@@ -44,7 +44,10 @@ class AppContainer(context: Context) {
     val http: okhttp3.OkHttpClient by lazy { okhttp3.OkHttpClient() }
 
     val settingsStore = SettingsStore(appContext)
-    val playbackReportingAllowed = kotlinx.coroutines.flow.combine(settingsStore.playbackPrefs, settingsStore.privateSession) { prefs, private ->
+    val playbackPrefs = settingsStore.playbackPrefs.stateIn(scope, SharingStarted.Eagerly, PlaybackPrefs())
+    val outputRatePolicy = settingsStore.outputRatePolicy.stateIn(scope, SharingStarted.Eagerly, com.aurora.music.playback.engine.OutputRatePolicy())
+    val savedSessions = settingsStore.savedSessions.stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val playbackReportingAllowed = kotlinx.coroutines.flow.combine(playbackPrefs, settingsStore.privateSession) { prefs, private ->
         prefs.scrobble && !private
     }.stateIn(scope, SharingStarted.Eagerly, false)
     val playbackReports = PlaybackReportDispatcher(scope, allowed = { playbackReportingAllowed.value }) {
@@ -341,8 +344,18 @@ class AppContainer(context: Context) {
     val discord = DiscordRpc(appContext, settingsStore, scope)
 
     val trackChoices = TrackChoices(appContext.filesDir)
-    val youtubeResolver by lazy { com.aurora.music.playback.YoutubeResolver(http) { trackChoices.matchFor(it)?.videoId } }
     val youtubeMusicCredentials = WebCredentials.youtubeMusic(appContext)
+    val youtubeResolver by lazy {
+        com.aurora.music.playback.YoutubeResolver(
+            http = http,
+            chosenVideo = { trackChoices.matchFor(it)?.videoId },
+            accountProvider = {
+                savedSessions.value.firstOrNull { it.type == ServerType.YOUTUBE_MUSIC && !it.isGuest }?.let { session ->
+                    runCatching { com.aurora.music.data.remote.YouTubeMusicWebSession.decode(youtubeMusicCredentials.read(session.token)) }.getOrNull()
+                }
+            },
+        )
+    }
     val spotifyCredentials = WebCredentials.spotify(appContext)
     val soundcloudCredentials = WebCredentials.soundcloud(appContext)
     val soundcloudWriter by lazy { SoundCloudWebWriter(appContext) }

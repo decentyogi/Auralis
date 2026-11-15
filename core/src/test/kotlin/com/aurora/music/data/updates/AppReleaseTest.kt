@@ -27,9 +27,15 @@ class AppReleaseTest {
     @Test fun parsesPublishedAuroraReleaseAndChecksum() {
         val release = GitHubRelease.parse(releaseJson())
         assertEquals("V2.6.0", release.tag)
-        assertEquals("https://github.com/nessli420/aurora/releases/tag/V2.6.0", release.pageUrl)
+        assertEquals("https://github.com/decentyogi/Auralis/releases/tag/V2.6.0", release.pageUrl)
         assertEquals(123L, release.apk?.size)
         assertEquals("a".repeat(64), release.apk?.sha256)
+    }
+
+    @Test fun parsesAuralisApkNameFirst() {
+        val json = """{"tag_name":"V2.6.0","draft":false,"prerelease":false,"assets":[{"name":"Auralis.apk","size":123,"browser_download_url":"https://github.com/decentyogi/Auralis/releases/download/V2.6.0/Auralis.apk","digest":"sha256:${"a".repeat(64)}"}]}"""
+        val release = GitHubRelease.parse(json)
+        assertEquals("https://github.com/decentyogi/Auralis/releases/download/V2.6.0/Auralis.apk", release.apk?.url)
     }
 
     @Test fun missingApkStillAllowsViewingRelease() {
@@ -55,26 +61,26 @@ class AppReleaseTest {
 
     @Test fun rejectsApksOutsideTheOfficialRelease() {
         listOf(
-            "http://github.com/nessli420/aurora/releases/download/V2.6.0/Aurora.apk",
-            "https://example.com/nessli420/aurora/releases/download/V2.6.0/Aurora.apk",
-            "https://github.com/someone/aurora/releases/download/V2.6.0/Aurora.apk",
-            "https://github.com/nessli420/aurora/releases/download/V2.5.0/Aurora.apk",
+            "http://github.com/decentyogi/Auralis/releases/download/V2.6.0/Auralis.apk",
+            "https://example.com/decentyogi/Auralis/releases/download/V2.6.0/Auralis.apk",
+            "https://github.com/someone/auralis/releases/download/V2.6.0/Auralis.apk",
+            "https://github.com/decentyogi/Auralis/releases/download/V2.5.0/Auralis.apk",
         ).forEach { url ->
             assertTrue(runCatching { GitHubRelease.parse(releaseJson(url)) }.isFailure)
         }
     }
 
     @Test fun prefersUniversalAssetAndDoesNotGuessBetweenSplitApks() {
-        val arm = asset("Aurora-arm64.apk")
-        val x86 = asset("Aurora-x86_64.apk")
-        val universal = asset("Aurora-universal.apk")
+        val arm = asset("Auralis-arm64.apk")
+        val x86 = asset("Auralis-x86_64.apk")
+        val universal = asset("Auralis-universal.apk")
         assertNull(GitHubRelease.parse("""{"tag_name":"V2.6.0","assets":[$arm,$x86]}""").apk)
         assertTrue(GitHubRelease.parse("""{"tag_name":"V2.6.0","assets":[$arm,$universal,$x86]}""")
-            .apk!!.url.endsWith("Aurora-universal.apk"))
+            .apk!!.url.endsWith("Auralis-universal.apk"))
     }
 
     private fun version(text: String) = requireNotNull(AppVersion.parse(text))
-    private fun asset(name: String) = """{"name":"$name","size":123,"browser_download_url":"https://github.com/nessli420/aurora/releases/download/V2.6.0/$name"}"""
-    private fun releaseJson(url: String = "https://github.com/nessli420/aurora/releases/download/V2.6.0/Aurora.apk") =
-        """{"tag_name":"V2.6.0","draft":false,"prerelease":false,"assets":[{"name":"Aurora.apk","size":123,"browser_download_url":"$url","digest":"sha256:${"a".repeat(64)}"}]}"""
+    private fun asset(name: String) = """{"name":"$name","size":123,"browser_download_url":"https://github.com/decentyogi/Auralis/releases/download/V2.6.0/$name"}"""
+    private fun releaseJson(url: String = "https://github.com/decentyogi/Auralis/releases/download/V2.6.0/Auralis.apk") =
+        """{"tag_name":"V2.6.0","draft":false,"prerelease":false,"assets":[{"name":"Auralis.apk","size":123,"browser_download_url":"$url","digest":"sha256:${"a".repeat(64)}"}]}"""
 }

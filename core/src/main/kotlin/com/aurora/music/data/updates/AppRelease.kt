@@ -42,8 +42,8 @@ data class ReleaseApk(val url: String, val size: Long, val sha256: String?)
 data class AppRelease(val tag: String, val version: AppVersion, val pageUrl: String, val apk: ReleaseApk?)
 
 object GitHubRelease {
-    const val REPOSITORY_URL = "https://github.com/nessli420/aurora"
-    const val LATEST_API = "https://api.github.com/repos/nessli420/aurora/releases/latest"
+    const val REPOSITORY_URL = "https://github.com/decentyogi/Auralis"
+    const val LATEST_API = "https://api.github.com/repos/decentyogi/Auralis/releases/latest"
     const val RELEASES_URL = "$REPOSITORY_URL/releases/latest"
 
     fun parse(json: String): AppRelease {
@@ -55,14 +55,16 @@ object GitHubRelease {
         val page = "$REPOSITORY_URL/releases/tag/$tag"
         val assets = root.getAsJsonArray("assets")?.mapNotNull { it.takeIf { it.isJsonObject }?.asJsonObject }
             .orEmpty().filter { it.string("name")?.endsWith(".apk", ignoreCase = true) == true }
-        val asset = assets.firstOrNull { it.string("name").equals("Aurora.apk", ignoreCase = true) }
+        val asset = assets.firstOrNull { it.string("name").equals("Auralis.apk", ignoreCase = true) }
+            ?: assets.firstOrNull { it.string("name").equals("Aurora.apk", ignoreCase = true) }
             ?: assets.firstOrNull { it.string("name")?.endsWith("universal.apk", ignoreCase = true) == true }
             ?: assets.singleOrNull()
         val apk = asset?.let {
             val url = it.string("browser_download_url") ?: return@let null
             val uri = URI(url)
             require(uri.scheme == "https" && uri.host == "github.com" && uri.port == -1 && uri.userInfo == null &&
-                uri.path.startsWith("/nessli420/aurora/releases/download/$tag/")) { "The APK is not from Aurora's releases." }
+                (uri.path.startsWith("/decentyogi/Auralis/releases/download/$tag/") ||
+                 uri.path.startsWith("/nessli420/aurora/releases/download/$tag/"))) { "The APK is not from Auralis's releases." }
             val size = it.get("size")?.asLong ?: 0
             require(size > 0) { "The release APK is empty." }
             val digest = it.string("digest")
