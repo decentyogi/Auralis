@@ -220,13 +220,15 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onCreate() {
         super.onCreate()
-        val networkFiles = Regex("[0-9a-f-]{36}\\.(source|partial|wav|mp3|flac|ogg|m4a|aac)")
-        java.io.File(cacheDir, "network-audio").listFiles()?.filter { it.isFile && networkFiles.matches(it.name) }
-            ?.forEach { it.delete() }
+        scope.launch(Dispatchers.IO) {
+            val networkFiles = Regex("[0-9a-f-]{36}\\.(source|partial|wav|mp3|flac|ogg|m4a|aac)")
+            java.io.File(cacheDir, "network-audio").listFiles()?.filter { it.isFile && networkFiles.matches(it.name) }
+                ?.forEach { it.delete() }
+        }
 
-        val initialPrefs = runBlocking { container.settingsStore.playbackPrefs.first() }
+        val initialPrefs = container.playbackPrefs.value
         val highRes = initialPrefs.preferHighRes
-        outputRatePolicy = runBlocking { container.settingsStore.outputRatePolicy.first() }
+        outputRatePolicy = container.outputRatePolicy.value
         val bitPerfectUsb = initialPrefs.bitPerfectUsb
         usbMode = initialPrefs.usbOutputMode
         usbFallback = initialPrefs.usbFallbackPolicy
