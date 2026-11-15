@@ -24,7 +24,11 @@ import org.schabi.newpipe.extractor.downloader.Request as NpRequest
 import org.schabi.newpipe.extractor.downloader.Response as NpResponse
 
 // blocks on network must run off main thread
-class YoutubeResolver(private val http: OkHttpClient = OkHttpClient(), private val chosenVideo: (String) -> String? = { null }) {
+class YoutubeResolver(
+    private val http: OkHttpClient = OkHttpClient(),
+    private val chosenVideo: (String) -> String? = { null },
+    private val accountProvider: () -> YouTubeMusicWebSession? = { null },
+) {
 
     private data class CachedStream(val url: String, val expiresAt: Long)
     private val cache = ConcurrentHashMap<String, CachedStream>()
@@ -35,6 +39,34 @@ class YoutubeResolver(private val http: OkHttpClient = OkHttpClient(), private v
     // stream key to the chosen audio stream's kbps, which webm and m4a containers rarely carry
     private val bitrates = ConcurrentHashMap<String, Int>()
     @Volatile private var initialized = false
+
+    private fun extractItag(stream: org.schabi.newpipe.extractor.stream.Stream): Int {
+        val itagFromProp = runCatching { stream.itag }.getOrNull()
+        if (itagFromProp != null && itagFromProp > 0) return itagFromProp
+        return Regex("[?&]itag=(\\d+)").find(stream.content.orEmpty())?.groupValues?.get(1)?.toIntOrNull() ?: 0
+    }
+
+    private fun audioStreamScore(stream: org.schabi.newpipe.extractor.stream.AudioStream): Int {
+        val itag = extractItag(stream)
+        val isOpus = stream.format == MediaFormat.WEBMA_OPUS || stream.format == MediaFormat.OPUS ||
+            stream.codec.orEmpty().contains("opus", ignoreCase = true)
+        val bitrate = stream.averageBitrate.coerceAtLeast(0)
+
+        return when {
+            // High quality AAC 256 kbps (YouTube Premium itag 141)
+            itag == 141 || bitrate >= 250 -> 3000 + bitrate
+            // Opus ~160 kbps VBR (itag 251) - superior fidelity over standard 128 kbps AAC
+            itag == 251 || isOpus -> 2000 + bitrate
+            // AAC 128 kbps (itag 140)
+            itag == 140 -> 1000 + bitrate
+            else -> bitrate
+        }
+    }
+
+    private fun selectBestAudioStream(streams: List<org.schabi.newpipe.extractor.stream.AudioStream>): org.schabi.newpipe.extractor.stream.AudioStream? {
+        return streams.filter { !it.content.isNullOrBlank() }
+            .maxWithOrNull(compareBy(::audioStreamScore))
+    }
 
     fun signatureTimestamp(videoId: String): Int? {
         ensureInit()
@@ -56,6 +88,8 @@ class YoutubeResolver(private val http: OkHttpClient = OkHttpClient(), private v
         if (query.isBlank()) return null
         return runCatching {
             ensureInit()
+            val session = accountProvider()
+            OkHttpDownloader.account.set(session)
             val yt = ServiceList.YouTube
             val search = yt.getSearchExtractor(query, listOf("music_songs"), "")
             search.fetchPage()
@@ -64,11 +98,10 @@ class YoutubeResolver(private val http: OkHttpClient = OkHttpClient(), private v
             val best = if (durationSec > 0) items.minByOrNull { abs(it.duration - durationSec) } else null
             val pick = best ?: items.first()
             val info = StreamInfo.getInfo(yt, pick.url)
-            // fall back to progressive muxed stream when audio-only withheld po_token
-            val audio = info.audioStreams
-                .filter { !it.content.isNullOrBlank() }
-                .maxByOrNull { it.averageBitrate }
-            rememberBitrate("spotify:$spotifyId", audio?.averageBitrate ?: 0)
+            // select highest quality audio stream (itag 141 256k AAC > itag 251 Opus 160k > itag 140 128k AAC)
+            val audio = selectBestAudioStream(info.audioStreams)
+            val selectedBitrate = audio?.averageBitrate?.coerceAtLeast(0) ?: 0
+            rememberBitrate("spotify:$spotifyId", selectedBitrate)
             val url = audio?.content
                 ?: info.videoStreams
                     .filter { !it.content.isNullOrBlank() }
@@ -76,12 +109,16 @@ class YoutubeResolver(private val http: OkHttpClient = OkHttpClient(), private v
                     ?.content
             if (!url.isNullOrBlank()) {
                 remember("spotify:$spotifyId", url)
-                Log.d(TAG, "resolved '$query' -> ${pick.name} (${pick.duration}s)")
+                val itag = audio?.let { extractItag(it) } ?: 0
+                Log.i(TAG, "Resolved '$query' -> ${pick.name} (${pick.duration}s): format=${audio?.format?.name ?: audio?.codec}, itag=$itag, bitrate=${selectedBitrate}kbps")
             } else {
-                Log.d(TAG, "no audio stream for '$query'")
+                Log.w(TAG, "No audio stream found for '$query'")
             }
             url
-        }.getOrElse { Log.d(TAG, "resolve failed '$query': ${it.message}"); null }
+        }.getOrElse { Log.w(TAG, "resolve failed '$query': ${it.message}"); null }
+        .also {
+            OkHttpDownloader.account.remove()
+        }
     }
 
     data class SearchResult(val videoId: String, val title: String, val artist: String, val durationSec: Int, val thumbnailUrl: String)
@@ -215,11 +252,21 @@ class YoutubeResolver(private val http: OkHttpClient = OkHttpClient(), private v
         playbackCache[cacheKey]?.takeIf { it.expiresAt > System.currentTimeMillis() }?.let { return it.stream }
         return runCatching {
             ensureInit()
+            val session = accountProvider()
+            OkHttpDownloader.account.set(session)
             val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
             val live = info.streamType in setOf(StreamType.LIVE_STREAM, StreamType.AUDIO_LIVE_STREAM)
-            val audio = info.audioStreams.filter { it.isUrl && it.content.isNotBlank() && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
-                .sortedByDescending { it.averageBitrate }.distinctBy { it.content }.take(6)
-                .firstOrNull { canOpenStream(it.content) }
+            val audioCandidates = info.audioStreams
+                .filter { it.isUrl && it.content.isNotBlank() && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
+                .sortedWith(compareByDescending(::audioStreamScore))
+                .distinctBy { it.content }
+                .take(3)
+            val audio = audioCandidates.firstOrNull { canOpenStream(it.content, 2_500) }
+                ?: audioCandidates.firstOrNull()
+            if (audio != null) {
+                val itag = extractItag(audio)
+                Log.i(TAG, "Resolved playback for $videoId: format=${audio.format?.name ?: audio.codec}, itag=$itag, sampleRate=${audio.audioSampleRate}Hz, bitrate=${audio.averageBitrate}kbps")
+            }
             val videos = (info.videoOnlyStreams + info.videoStreams)
                 .filter { it.isUrl && it.content.isNotBlank() && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
             fun height(stream: org.schabi.newpipe.extractor.stream.VideoStream) = stream.getResolution().orEmpty().takeWhile { it.isDigit() }.toIntOrNull() ?: 0
@@ -227,10 +274,10 @@ class YoutubeResolver(private val http: OkHttpClient = OkHttpClient(), private v
                 .ifEmpty { videos.sortedBy(::height) }
                 .sortedWith(compareByDescending<org.schabi.newpipe.extractor.stream.VideoStream>(::height)
                     .thenByDescending { it.fps })
-            val video = if (live) null else candidates.distinctBy { it.content }.take(6).firstOrNull { canOpenStream(it.content) }
+            val video = if (live) null else candidates.distinctBy { it.content }.take(3).firstOrNull { canOpenStream(it.content, 2_500) }
             val muxed = if (audio != null || live) null else info.videoStreams
                 .filter { it.isUrl && it.content.isNotBlank() && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
-                .sortedBy(::height).distinctBy { it.content }.take(6).firstOrNull { canOpenStream(it.content) }
+                .sortedBy(::height).distinctBy { it.content }.take(3).firstOrNull { canOpenStream(it.content, 2_500) }
             val stream = when {
                 live && info.hlsUrl.isNotBlank() -> PlaybackStream(info.hlsUrl, "application/x-mpegURL")
                 live && info.dashMpdUrl.isNotBlank() -> PlaybackStream(info.dashMpdUrl, "application/dash+xml")
@@ -250,11 +297,14 @@ class YoutubeResolver(private val http: OkHttpClient = OkHttpClient(), private v
                 playbackCache[cacheKey] = CachedPlayback(it, minOf(cache["video:$videoId"]!!.expiresAt, now + if (live) 60_000 else 600_000))
             }
         }.getOrElse { Log.w(TAG, "Stream extraction failed for $videoId: ${it.javaClass.simpleName}"); null }
+        .also {
+            OkHttpDownloader.account.remove()
+        }
     }
 
-    private fun canOpenStream(url: String): Boolean {
+    private fun canOpenStream(url: String, timeoutMs: Int = 2_500): Boolean {
         val source = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(8_000).setReadTimeoutMs(8_000).createDataSource()
+            .setConnectTimeoutMs(timeoutMs).setReadTimeoutMs(timeoutMs).createDataSource()
         return try {
             source.open(androidx.media3.datasource.DataSpec.Builder().setUri(url).build())
             true
