@@ -22,7 +22,7 @@ class ScopedMediaServerTest {
                 assertArrayEquals(file.readBytes(), request(server.port, grant.path).body)
                 assertEquals(404, request(server.port, "/media/../${file.name}").status)
                 assertEquals(404, request(server.port, grant.path + "?token=other").status)
-                assertEquals(404, request(server.port, "/${file.absolutePath}").status)
+                assertEquals(404, request(server.port, "/" + file.absolutePath.trimStart('/')).status)
                 server.revoke(grant.token)
                 assertEquals(404, request(server.port, grant.path).status)
                 assertTrue(file.exists())

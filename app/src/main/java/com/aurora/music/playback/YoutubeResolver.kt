@@ -40,11 +40,8 @@ class YoutubeResolver(
     private val bitrates = ConcurrentHashMap<String, Int>()
     @Volatile private var initialized = false
 
-    private fun extractItag(stream: org.schabi.newpipe.extractor.stream.Stream): Int {
-        val itagFromProp = runCatching { stream.itag }.getOrNull()
-        if (itagFromProp != null && itagFromProp > 0) return itagFromProp
-        return Regex("[?&]itag=(\\d+)").find(stream.content.orEmpty())?.groupValues?.get(1)?.toIntOrNull() ?: 0
-    }
+    private fun extractItag(stream: org.schabi.newpipe.extractor.stream.Stream): Int =
+        Regex("[?&]itag=(\\d+)").find(stream.content.orEmpty())?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
     private fun audioStreamScore(stream: org.schabi.newpipe.extractor.stream.AudioStream): Int {
         val itag = extractItag(stream)
@@ -65,7 +62,7 @@ class YoutubeResolver(
 
     private fun selectBestAudioStream(streams: List<org.schabi.newpipe.extractor.stream.AudioStream>): org.schabi.newpipe.extractor.stream.AudioStream? {
         return streams.filter { !it.content.isNullOrBlank() }
-            .maxWithOrNull(compareBy(::audioStreamScore))
+            .maxWithOrNull(compareBy<org.schabi.newpipe.extractor.stream.AudioStream> { audioStreamScore(it) })
     }
 
     fun signatureTimestamp(videoId: String): Int? {
@@ -258,14 +255,14 @@ class YoutubeResolver(
             val live = info.streamType in setOf(StreamType.LIVE_STREAM, StreamType.AUDIO_LIVE_STREAM)
             val audioCandidates = info.audioStreams
                 .filter { it.isUrl && it.content.isNotBlank() && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
-                .sortedWith(compareByDescending(::audioStreamScore))
+                .sortedWith(compareByDescending<org.schabi.newpipe.extractor.stream.AudioStream> { audioStreamScore(it) })
                 .distinctBy { it.content }
                 .take(3)
             val audio = audioCandidates.firstOrNull { canOpenStream(it.content, 2_500) }
                 ?: audioCandidates.firstOrNull()
             if (audio != null) {
                 val itag = extractItag(audio)
-                Log.i(TAG, "Resolved playback for $videoId: format=${audio.format?.name ?: audio.codec}, itag=$itag, sampleRate=${audio.audioSampleRate}Hz, bitrate=${audio.averageBitrate}kbps")
+                Log.i(TAG, "Resolved playback for $videoId: format=${audio.format?.name ?: audio.codec}, itag=$itag, bitrate=${audio.averageBitrate}kbps")
             }
             val videos = (info.videoOnlyStreams + info.videoStreams)
                 .filter { it.isUrl && it.content.isNotBlank() && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
